@@ -75,7 +75,7 @@ extern void mem_use(void);
  *	Init task must be ok at boot for the ix86 as we will check its signals
  *	via the SMP irq return path.
  */
- 
+
 struct task_struct * init_tasks[NR_CPUS] = {&init_task, };
 
 /*
@@ -125,6 +125,113 @@ extern struct task_struct *child_reaper;
 
 #endif
 
+//Added
+
+typedef struct task_queue{
+    struct task_struct * head, *tail;
+    int timeQ, id;
+}task_queue;
+
+//takes input  of queue level and returns the cpu time in miliseconds
+double set_time_quantum(int queue_level)
+{
+	//time in miliseconds
+	double time_quantum;
+	//Natural Logrithmic return, base case is 10ms grows to 72ms total
+	time_quantum = (log(queue_level)*4)+10;
+	return time_quantum;
+
+}
+
+/*
+Add a task to the tail of a given task_queue
+*/
+void  add_to_taskqueue(struct * task_struct tsk, task_queue * q){
+    if(q->head == null){
+        q->head = tsk;
+        q->tail = tsk;
+    } else {
+        q->tail->next_task = tsk;
+        tsk->prev_task = q->tail;
+        q->tail = tsk;
+    }
+}
+
+/*
+Remove a task from the front of the queue.
+*/
+
+task_struct * rem_from_taskqueue(task_queue * q){
+    task_struct * tsk = q->head;
+
+    q->head = q->head->next_task;
+    q->head->prev_task = null;
+
+    return tsk;
+}
+
+void add_to_next(struct task_struct * tsk, task_queue * currQ, task_queue * nxtQ){
+    add_to_taskqueue(rem_from_taskqueue(currQ), nxtQ);
+}
+
+/*
+Check the given task_queue and see if it has any tasks to run
+*/
+
+int check_head(task_queue * q){
+    if(q->head != null){
+        return 1;
+    }
+    return 0;
+}
+
+/*
+Check all task_queues and return an integer
+refering to the highest priority queue
+with available tasks to run (lowest interger value)
+*/
+int check_all_queues(task_queue * all){
+    for(int i = 0; i < 256; i++){
+        if(check_head(all[i])){
+            return i;
+    }
+    return -1;
+}
+
+/*
+Our scheduling function. Takes in the next task from
+the runqueue that should have gone immediately to the cpu,
+but instead we take it in to our data structure and decide
+what should be run.
+*/
+
+task_struct * pSched(task_struct * next, task_queue * all){
+    //If there's a new task (next != null)
+        //Add into the first queue
+    if(next != null){
+        add_to_taskqueue(next, all[0]);
+    }
+
+    //Now we decide which task to run next
+        //If the above case occurred, that task will be run next, naturally
+    int queueToRun = check_all_queues(all);
+    task_struct * taskToRun = all[queueToRun]->head;
+
+    //Set time quantum for task to be run at this queue level
+    taskToRun->counter = set_time_quantum(queueToRun);
+
+    //Add the task to the next queue (unless it is at the end of the queue)
+    if(queueToRun < 255)
+        add_to_next(taskToRun, all[queueToRun], all[queueToRun+1]);
+    else
+        add_to_taskqueue(rem_from_taskqueue(all[255]), all[255]);
+
+    return taskToRun;
+}
+
+//End Added
+
+
 void scheduling_functions_start_here(void) { }
 
 /*
@@ -168,7 +275,7 @@ static inline int goodness(struct task_struct * p, int this_cpu, struct mm_struc
 		weight = p->counter;
 		if (!weight)
 			goto out;
-			
+
 #ifdef CONFIG_SMP
 		/* Give a largish advantage to the same processor...   */
 		/* (this is equivalent to penalizing other processors) */
@@ -268,15 +375,15 @@ send_now_idle:
 			 * physical package. Use them if found.
 			 */
 			if (smp_num_siblings == 2) {
-				if (cpu_curr(cpu_sibling_map[cpu]) == 
+				if (cpu_curr(cpu_sibling_map[cpu]) ==
 			            idle_task(cpu_sibling_map[cpu])) {
 					oldest_idle = last_schedule(cpu);
 					target_tsk = tsk;
 					break;
 				}
-				
+
                         }
-#endif		
+#endif
 			if (last_schedule(cpu) < oldest_idle) {
 				oldest_idle = last_schedule(cpu);
 				target_tsk = tsk;
@@ -303,7 +410,7 @@ send_now_idle:
 			smp_send_reschedule(tsk->processor);
 	}
 	return;
-		
+
 
 #else /* UP */
 	int this_cpu = smp_processor_id();
@@ -318,12 +425,12 @@ send_now_idle:
 /*
  * Careful!
  *
- * This has to add the process to the _end_ of the 
+ * This has to add the process to the _end_ of the
  * run-queue, not the beginning. The goodness value will
  * determine whether this process will run next. This is
  * important to get SCHED_FIFO and SCHED_RR right, where
  * a process that is either pre-empted or its time slice
- * has expired, should be moved to the tail of the run 
+ * has expired, should be moved to the tail of the run
  * queue for its priority - Bhavesh Davda
  */
 static inline void add_to_runqueue(struct task_struct * p)
@@ -396,7 +503,7 @@ static void process_timeout(unsigned long __data)
  * delivered to the current task. In this case the remaining time
  * in jiffies will be returned, or 0 if the timer expired in time
  *
- * The current task state is guaranteed to be TASK_RUNNING when this 
+ * The current task state is guaranteed to be TASK_RUNNING when this
  * routine returns.
  *
  * Specifying a @timeout value of %MAX_SCHEDULE_TIMEOUT will schedule
@@ -546,6 +653,9 @@ asmlinkage void schedule_tail(struct task_struct *prev)
  */
 asmlinkage void schedule(void)
 {
+    task_queue * pQueueHead = calloc(256, sizeof(struct task_queue));
+    task_queue * pActive = pQueueHead;
+
 	struct schedule_data * sched_data;
 	struct task_struct *prev, *next, *p;
 	struct list_head *tmp;
@@ -612,6 +722,8 @@ repeat_schedule:
 		}
 	}
 
+	next = pSched(next, &pQueueHead);
+
 	/* Do we need to re-calculate counters? */
 	if (unlikely(!c)) {
 		struct task_struct *p;
@@ -631,7 +743,11 @@ repeat_schedule:
 	 * sched_data.
 	 */
 	sched_data->curr = next;
+
+
 	task_set_cpu(next, this_cpu);
+
+
 	spin_unlock_irq(&runqueue_lock);
 
 	if (unlikely(prev == next)) {
@@ -719,7 +835,7 @@ static inline void __wake_up_common (wait_queue_head_t *q, unsigned int mode,
 
 	CHECK_MAGIC_WQHEAD(q);
 	WQ_CHECK_LIST_HEAD(&q->task_list);
-	
+
 	list_for_each(tmp,&q->task_list) {
 		unsigned int state;
                 wait_queue_t *curr = list_entry(tmp, wait_queue_t, task_list);
@@ -827,7 +943,7 @@ long interruptible_sleep_on_timeout(wait_queue_head_t *q, long timeout)
 void sleep_on(wait_queue_head_t *q)
 {
 	SLEEP_ON_VAR
-	
+
 	current->state = TASK_UNINTERRUPTIBLE;
 
 	SLEEP_ON_HEAD
@@ -838,7 +954,7 @@ void sleep_on(wait_queue_head_t *q)
 long sleep_on_timeout(wait_queue_head_t *q, long timeout)
 {
 	SLEEP_ON_VAR
-	
+
 	current->state = TASK_UNINTERRUPTIBLE;
 
 	SLEEP_ON_HEAD
@@ -934,7 +1050,7 @@ static inline struct task_struct *find_process_by_pid(pid_t pid)
 	return tsk;
 }
 
-static int setscheduler(pid_t pid, int policy, 
+static int setscheduler(pid_t pid, int policy,
 			struct sched_param *param)
 {
 	struct sched_param lp;
@@ -960,7 +1076,7 @@ static int setscheduler(pid_t pid, int policy,
 	retval = -ESRCH;
 	if (!p)
 		goto out_unlock;
-			
+
 	if (policy < 0)
 		policy = p->policy;
 	else {
@@ -969,7 +1085,7 @@ static int setscheduler(pid_t pid, int policy,
 				policy != SCHED_OTHER)
 			goto out_unlock;
 	}
-	
+
 	/*
 	 * Valid priorities for SCHED_FIFO and SCHED_RR are 1..99, valid
 	 * priority for SCHED_OTHER is 0.
@@ -981,7 +1097,7 @@ static int setscheduler(pid_t pid, int policy,
 		goto out_unlock;
 
 	retval = -EPERM;
-	if ((policy == SCHED_FIFO || policy == SCHED_RR) && 
+	if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
 	    !capable(CAP_SYS_NICE))
 		goto out_unlock;
 	if ((current->euid != p->euid) && (current->euid != p->uid) &&
@@ -1002,7 +1118,7 @@ out_nounlock:
 	return retval;
 }
 
-asmlinkage long sys_sched_setscheduler(pid_t pid, int policy, 
+asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
 				      struct sched_param *param)
 {
 	return setscheduler(pid, policy, param);
@@ -1067,7 +1183,7 @@ out_unlock:
 asmlinkage long sys_sched_yield(void)
 {
 	/*
-	 * Trick. sched_yield() first counts the number of truly 
+	 * Trick. sched_yield() first counts the number of truly
 	 * 'pending' runnable processes, then returns if it's
 	 * only the current processes. (This test does not have
 	 * to be atomic.) In threaded applications this optimization
