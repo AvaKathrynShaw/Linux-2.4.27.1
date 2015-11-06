@@ -129,16 +129,39 @@ extern struct task_struct *child_reaper;
 
 typedef struct task_queue{
     struct task_struct * head, *tail;
+    //the time quantium is in the task struct as "counter" of type int
     int timeQ, id;
 }task_queue;
 
-//takes input  of queue level and returns the cpu time in miliseconds
+//takes input  of queue level and returns the cpu time in miliseconds, pass value to tast_struct->counter
 double set_time_quantum(int queue_level)
-{
-	//time in miliseconds
-	double time_quantum;
-	//Natural Logrithmic return, base case is 10ms grows to 72ms total
-	time_quantum = (log(queue_level)*4)+10;
+{	
+	
+	int time_quantum;
+	//base case is 10ms grows to 128ms total
+	if (queue_level=0){
+		time_quantum=10;
+	} else if(queue_level>0 && queue_level<10){
+		time_quantum=20;
+	} else if(queue_level>10 && queue_level<20){
+		time_quantum=20;
+	}else if(queue_level>20 && queue_level<35){
+		time_quantum=20;
+	}else if(queue_level>35 && queue_level<60){
+		time_quantum=20;
+	}else if(queue_level>60 && queue_level<90){
+		time_quantum=20;
+	}else if(queue_level>90 && queue_level<120){
+		time_quantum=20;
+	}else if(queue_level>120 && queue_level<160){
+		time_quantum=20;
+	}else if(queue_level>160 && queue_level<190){
+		time_quantum=20;
+	}else if(queue_level>190 && queue_level<225){
+		time_quantum=20;
+	}else if(queue_level>225 && queue_level<255){
+		time_quantum=20;
+	}
 	return time_quantum;
 
 }
