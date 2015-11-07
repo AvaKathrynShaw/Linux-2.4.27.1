@@ -127,50 +127,27 @@ extern struct task_struct *child_reaper;
 
 //Added
 
-typedef struct task_queue{
+typedef struct pQueue{
     struct task_struct * head, *tail;
-    //the time quantium is in the task struct as "counter" of type int
     int timeQ, id;
-}task_queue;
+}pQueue;
 
-//takes input  of queue level and returns the cpu time in miliseconds, pass value to tast_struct->counter
-double set_time_quantum(int queue_level)
-{	
-	
+//takes input  of queue level and returns the cpu time in miliseconds
+int set_time_quantum(int queue_level)
+{
+	//time in miliseconds
 	int time_quantum;
-	//base case is 10ms grows to 128ms total
-	if (queue_level=0){
-		time_quantum=10;
-	} else if(queue_level>0 && queue_level<10){
-		time_quantum=20;
-	} else if(queue_level>10 && queue_level<20){
-		time_quantum=20;
-	}else if(queue_level>20 && queue_level<35){
-		time_quantum=20;
-	}else if(queue_level>35 && queue_level<60){
-		time_quantum=20;
-	}else if(queue_level>60 && queue_level<90){
-		time_quantum=20;
-	}else if(queue_level>90 && queue_level<120){
-		time_quantum=20;
-	}else if(queue_level>120 && queue_level<160){
-		time_quantum=20;
-	}else if(queue_level>160 && queue_level<190){
-		time_quantum=20;
-	}else if(queue_level>190 && queue_level<225){
-		time_quantum=20;
-	}else if(queue_level>225 && queue_level<255){
-		time_quantum=20;
-	}
+	//Natural Logrithmic return, base case is 10ms grows to 72ms total
+	time_quantum = 10 + (int)(queue_level/10);
 	return time_quantum;
 
 }
 
 /*
-Add a task to the tail of a given task_queue
+Add a task to the tail of a given pQueue
 */
-void  add_to_taskqueue(struct * task_struct tsk, task_queue * q){
-    if(q->head == null){
+void  add_to_taskqueue(struct task_struct * tsk, pQueue * q){
+    if(q->head == NULL){
         q->head = tsk;
         q->tail = tsk;
     } else {
@@ -184,39 +161,41 @@ void  add_to_taskqueue(struct * task_struct tsk, task_queue * q){
 Remove a task from the front of the queue.
 */
 
-task_struct * rem_from_taskqueue(task_queue * q){
-    task_struct * tsk = q->head;
+struct task_struct * rem_from_taskqueue(pQueue * q){
+    struct task_struct * tsk = q->head;
 
     q->head = q->head->next_task;
-    q->head->prev_task = null;
+    q->head->prev_task = NULL;
 
     return tsk;
 }
 
-void add_to_next(struct task_struct * tsk, task_queue * currQ, task_queue * nxtQ){
+void add_to_next(struct task_struct * tsk, pQueue * currQ, pQueue * nxtQ){
     add_to_taskqueue(rem_from_taskqueue(currQ), nxtQ);
 }
 
 /*
-Check the given task_queue and see if it has any tasks to run
+Check the given pQueue and see if it has any tasks to run
 */
 
-int check_head(task_queue * q){
-    if(q->head != null){
+int check_head(pQueue * q){
+    if(q->head != NULL){
         return 1;
     }
     return 0;
 }
 
 /*
-Check all task_queues and return an integer
+Check all pQueues and return an integer
 refering to the highest priority queue
 with available tasks to run (lowest interger value)
 */
-int check_all_queues(task_queue * all){
-    for(int i = 0; i < 256; i++){
-        if(check_head(all[i])){
+int check_all_queues(pQueue * all){
+    int i;
+    for(i = 0; i < 256; i++){
+        if(check_head(&all[i])){
             return i;
+        }
     }
     return -1;
 }
@@ -228,26 +207,26 @@ but instead we take it in to our data structure and decide
 what should be run.
 */
 
-task_struct * pSched(task_struct * next, task_queue * all){
-    //If there's a new task (next != null)
+struct task_struct * pSched(struct task_struct * next, pQueue * all){
+    //If there's a new task (next != NULL)
         //Add into the first queue
-    if(next != null){
-        add_to_taskqueue(next, all[0]);
+    if(next != NULL){
+        add_to_taskqueue(next, &all[0]);
     }
 
     //Now we decide which task to run next
         //If the above case occurred, that task will be run next, naturally
     int queueToRun = check_all_queues(all);
-    task_struct * taskToRun = all[queueToRun]->head;
+    struct task_struct * taskToRun = all[queueToRun].head;
 
     //Set time quantum for task to be run at this queue level
     taskToRun->counter = set_time_quantum(queueToRun);
 
     //Add the task to the next queue (unless it is at the end of the queue)
     if(queueToRun < 255)
-        add_to_next(taskToRun, all[queueToRun], all[queueToRun+1]);
+        add_to_next(taskToRun, &all[queueToRun], &all[queueToRun+1]);
     else
-        add_to_taskqueue(rem_from_taskqueue(all[255]), all[255]);
+        add_to_taskqueue(rem_from_taskqueue(&all[255]), &all[255]);
 
     return taskToRun;
 }
@@ -676,8 +655,13 @@ asmlinkage void schedule_tail(struct task_struct *prev)
  */
 asmlinkage void schedule(void)
 {
-    task_queue * pQueueHead = calloc(256, sizeof(struct task_queue));
-    task_queue * pActive = pQueueHead;
+    pQueue * pQueueHead = kmalloc(sizeof(pQueue) * 256);
+    int qCount;
+    for(qCount = 0; qCount < 256; qCount++){
+        //pQueueHead[qCount] = kmalloc(sizeof(pQueue));
+        pQueueHead[qCount].id = qCount;
+        pQueueHead[qCount].timeQ = set_time_quantum(qCount);
+    }
 
 	struct schedule_data * sched_data;
 	struct task_struct *prev, *next, *p;
@@ -710,8 +694,7 @@ need_resched_back:
 	/* move an exhausted RR process to be last.. */
 	if (unlikely(prev->policy == SCHED_RR))
 		if (!prev->counter) {
-			prev->counter = NICE_TO_TICKS(prev->nice);
-			move_last_runqueue(prev);
+			del_from_runqueue(prev);
 		}
 
 	switch (prev->state) {
