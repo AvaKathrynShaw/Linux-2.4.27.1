@@ -129,7 +129,7 @@ extern struct task_struct *child_reaper;
 
 typedef struct pQueue{
     struct task_struct * head, *tail;
-    int timeQ, id;
+    int * timeQ, id;
 }pQueue;
 
 //takes input  of queue level and returns the cpu time in miliseconds
@@ -146,14 +146,14 @@ int set_time_quantum(int queue_level)
 /*
 Add a task to the tail of a given pQueue
 */
-void  add_to_taskqueue(struct task_struct * tsk, pQueue * q){
-    if(q->head == NULL){
-        q->head = tsk;
-        q->tail = tsk;
+void  add_to_taskqueue(struct task_struct * tsk, pQueue * qHead, int qNum){
+    if(qHead[qNum].head == NULL){
+        qHead[qNum].head = tsk;
+        qHead[qNum].tail = tsk;
     } else {
-        q->tail->next_task = tsk;
-        tsk->prev_task = q->tail;
-        q->tail = tsk;
+        qHead[qNum].tail->next_task = tsk;
+        tsk->prev_task = qHead[qNum].tail;
+        qHead[qNum].tail = tsk;
     }
 }
 
@@ -161,17 +161,17 @@ void  add_to_taskqueue(struct task_struct * tsk, pQueue * q){
 Remove a task from the front of the queue.
 */
 
-struct task_struct * rem_from_taskqueue(pQueue * q){
-    struct task_struct * tsk = q->head;
+struct task_struct * rem_from_taskqueue(int q, pQueue * qHead){
+    struct task_struct * tsk = qHead[q].head;
 
-    q->head = q->head->next_task;
-    q->head->prev_task = NULL;
+    qHead[q].head = qHead[q].head->next_task;
+    qHead[q].head->prev_task = NULL;
 
     return tsk;
 }
 
-void add_to_next(struct task_struct * tsk, pQueue * currQ, pQueue * nxtQ){
-    add_to_taskqueue(rem_from_taskqueue(currQ), nxtQ);
+void add_to_next(struct task_struct * tsk, int currQ, pQueue * all){
+    add_to_taskqueue(rem_from_taskqueue(currQ, all), all, currQ + 1);
 }
 
 /*
@@ -211,7 +211,7 @@ struct task_struct * pSched(struct task_struct * next, pQueue * all){
     //If there's a new task (next != NULL)
         //Add into the first queue
     if(next != NULL){
-        add_to_taskqueue(next, &all[0]);
+        add_to_taskqueue(next, all, 0);
     }
 
     //Now we decide which task to run next
@@ -220,13 +220,13 @@ struct task_struct * pSched(struct task_struct * next, pQueue * all){
     struct task_struct * taskToRun = all[queueToRun].head;
 
     //Set time quantum for task to be run at this queue level
-    taskToRun->counter = set_time_quantum(queueToRun);
+    taskToRun->counter = *(all[queueToRun].timeQ);
 
     //Add the task to the next queue (unless it is at the end of the queue)
     if(queueToRun < 255)
-        add_to_next(taskToRun, &all[queueToRun], &all[queueToRun+1]);
+        add_to_next(taskToRun, queueToRun, all);
     else
-        add_to_taskqueue(rem_from_taskqueue(&all[255]), &all[255]);
+        add_to_taskqueue(rem_from_taskqueue(255, all), all, 255);
 
     return taskToRun;
 }
@@ -658,9 +658,13 @@ asmlinkage void schedule(void)
     pQueue * pQueueHead = kmalloc(sizeof(pQueue) * 256);
     int qCount;
     for(qCount = 0; qCount < 256; qCount++){
-        //pQueueHead[qCount] = kmalloc(sizeof(pQueue));
-        pQueueHead[qCount].id = qCount;
-        pQueueHead[qCount].timeQ = set_time_quantum(qCount);
+        pQueueHead[qCount].head = kmalloc(sizeof(struct task_struct));
+        pQueueHead[qCount].id = kmalloc(sizeof(int));
+        pQueueHead[qCount].timeQ = kmalloc(sizeof(int));
+        pQueueHead[qCount].tail = kmalloc(sizeof(struct task_struct));
+
+        (pQueueHead[qCount].id) = qCount;
+        *(pQueueHead[qCount].timeQ) = set_time_quantum(qCount);
     }
 
 	struct schedule_data * sched_data;
@@ -728,7 +732,7 @@ repeat_schedule:
 		}
 	}
 
-	next = pSched(next, &pQueueHead);
+	next = pSched(next, pQueueHead);
 
 	/* Do we need to re-calculate counters? */
 	if (unlikely(!c)) {
